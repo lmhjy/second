@@ -1,0 +1,10 @@
+user
+test
+admin
+mysql
+ubuntu
+staging
+production
+sysadmin
+private
+anonymous
