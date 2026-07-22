@@ -1,0 +1,10 @@
+root
+admin
+administrator
+ftpuser
+webadmin
+test
+guest
+user
+operator
+www
