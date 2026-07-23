@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>密码强度检测工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #eaeaea;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* 标题区域 */
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 36px;
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5, #00d2ff);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 3s linear infinite;
+        }
+
+        @keyframes shine {
+            to { background-position: 200% center; }
+        }
+
+        .header p {
+            color: #8899aa;
+            margin-top: 8px;
+            font-size: 14px;
+        }
+
+        /* 控制面板 */
+        .control-panel {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .control-panel label {
+            font-size: 14px;
+            color: #99aabb;
+        }
+
+        .control-panel input[type="number"] {
+            width: 120px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .control-panel input[type="number"]:focus {
+            border-color: #3a7bd5;
+        }
+
+        .btn {
+            padding: 12px 32px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            letter-spacing: 1px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #00d2ff, #3a7bd5);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(58, 123, 213, 0.4);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(58, 123, 213, 0.6);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(238, 90, 36, 0.4);
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+        }
+
+        /* 进度区域 */
+        .progress-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 12px;
+            background: rgba(0,0,0,0.4);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5, #7b2ff7);
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+
+        /* 统计卡片 */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 18px;
+            text-align: center;
+        }
+
+        .stat-card .label {
+            font-size: 13px;
+            color: #8899aa;
+            margin-bottom: 6px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .stat-card.total .value { color: #3a7bd5; }
+        .stat-card.strong .value { color: #00e396; }
+        .stat-card.weak .value { color: #ff6b6b; }
+        .stat-card.rate .value { color: #f7b731; }
+
+        /* 左右分栏 */
+        .columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .column {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            overflow: hidden;
+        }
+
+        .column-header {
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .column-header.strong-header {
+            background: linear-gradient(135deg, rgba(0, 227, 150, 0.15), rgba(0, 227, 150, 0.05));
+            border-bottom: 2px solid rgba(0, 227, 150, 0.3);
+        }
+
+        .column-header.weak-header {
+            background: linear-gradient(135deg, rgba(255, 107, 107, 0.15), rgba(255, 107, 107, 0.05));
+            border-bottom: 2px solid rgba(255, 107, 107, 0.3);
+        }
+
+        .column-header h2 {
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .strong-header h2 { color: #00e396; }
+        .weak-header h2 { color: #ff6b6b; }
+
+        .count-badge {
+            background: rgba(255,255,255,0.1);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .password-list {
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .password-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .password-list::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+
+        .password-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            margin-bottom: 6px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .password-item.strong-item {
+            background: rgba(0, 227, 150, 0.08);
+            border: 1px solid rgba(0, 227, 150, 0.15);
+            color: #7dffb3;
+        }
+
+        .password-item.weak-item {
+            background: rgba(255, 107, 107, 0.08);
+            border: 1px solid rgba(255, 107, 107, 0.15);
+            color: #ffaaaa;
+        }
+
+        .password-item .reason {
+            font-size: 11px;
+            color: #8899aa;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        /* 规则说明 */
+        .rules-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+        }
+
+        .rules-panel h3 {
+            color: #3a7bd5;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+
+        .rules-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            font-size: 13px;
+            color: #99aabb;
+        }
+
+        .rules-grid li {
+            list-style: none;
+            padding: 6px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .rules-grid li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #00e396;
+        }
+
+        .rules-grid li.danger::before {
+            content: "✗";
+            color: #ff6b6b;
+        }
+
+        /* 响应式 */
+        @media (max-width: 900px) {
+            .columns { grid-template-columns: 1fr; }
+            .stats-row { grid-template-columns: repeat(2, 1fr); }
+            .rules-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- 标题 -->
+    <div class="header">
+        <h1>🔐 密码强度检测工具</h1>
+        <p>随机生成密码 → 自动检测强弱 → 分类展示结果</p>
+    </div>
+
+    <!-- 规则说明 -->
+    <div class="rules-panel">
+        <h3>📋 检测规则 & 生成策略说明</h3>
+        <ul class="rules-grid">
+            <li>密码长度 ≥ 8 位</li>
+            <li>至少包含 3 种字符类型（大写、小写、数字、特殊符号）</li>
+            <li class="danger">不能是常见弱密码（如 P@ssw0rd、12345678、qwerty123 等）</li>
+            <li class="danger">不能包含连续或重复模式（如 aaaaa、123123）</li>
+            <li>🎲 纯数字密码占比 ~15%（如 12345678、87654321）</li>
+            <li>🎲 数字+字母简单组合 ~20%（如 abc12345、hello2024）</li>
+            <li>🎲 常见弱密码变体 ~20%（如 P@ssw0rd、Adm1n!、qwerty123）</li>
+            <li>🎲 键盘连续序列 ~10%（如 qwer123、asdfg!@）</li>
+        </ul>
+    </div>
+
+    <!-- 控制面板 -->
+    <div class="control-panel">
+        <label>生成数量：</label>
+        <input type="number" id="genCount" value="10000" min="100" max="100000" step="100">
+        <button class="btn btn-primary" id="startBtn" onclick="startCheck()">🚀 开始检测</button>
+        <button class="btn btn-danger" id="stopBtn" onclick="stopCheck()" style="display:none;">⏹ 停止</button>
+    </div>
+
+    <!-- 进度条 -->
+    <div class="progress-section" id="progressSection" style="display:none;">
+        <div class="progress-info">
+            <span id="progressText">检测中...</span>
+            <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="stats-row" id="statsRow" style="display:none;">
+        <div class="stat-card total">
+            <div class="label">总检测数</div>
+            <div class="value" id="statTotal">0</div>
+        </div>
+        <div class="stat-card strong">
+            <div class="label">强密码 ✅</div>
+            <div class="value" id="statStrong">0</div>
+        </div>
+        <div class="stat-card weak">
+            <div class="label">弱密码 ❌</div>
+            <div class="value" id="statWeak">0</div>
+        </div>
+        <div class="stat-card rate">
+            <div class="label">强密码占比</div>
+            <div class="value" id="statRate">0%</div>
+        </div>
+    </div>
+
+    <!-- 左右分栏 -->
+    <div class="columns" id="columnsSection" style="display:none;">
+        <!-- 强密码区域 -->
+        <div class="column">
+            <div class="column-header strong-header">
+                <h2>💪 强密码列表</h2>
+                <span class="count-badge" id="strongCount">0</span>
+            </div>
+            <div class="password-list" id="strongList"></div>
+        </div>
+
+        <!-- 弱密码区域 -->
+        <div class="column">
+            <div class="column-header weak-header">
+                <h2>⚠️ 弱密码列表</h2>
+                <span class="count-badge" id="weakCount">0</span>
+            </div>
+            <div class="password-list" id="weakList"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ========== 常见弱密码字典 ==========
+const COMMON_PASSWORDS = [
+    // 经典弱密码
+    '12345678', '123456789', '1234567890', '123123123', '123123123123',
+    'password', 'password1', 'password12', 'password123', 'passw0rd',
+    'p@ssw0rd', 'p@ssw0rd1', 'p@ssword', 'p@ssw0rd!',
+    'qwerty12', 'qwerty123', 'qwertyui', 'qwertyuiop',
+    'admin123', 'admin1234', 'admin!23', 'administrator',
+    '@dministrat0r', 'admin@123', 'admin@2024', 'admin@2025',
+    '!qaz1qaz', '!QAZ1qaz', '!qaz2wsx', '!QAZ2wsx',
+    '1q2w3e4r', '1q2w3e4r5t', 'q1w2e3r4', 'q1w2e3r4t5',
+    'abcd1234', 'abc12345', 'abcdef12', 'abcdefgh',
+    'iloveyou', 'iloveyou1', 'iloveyou123', 'i love you',
+    'welcome1', 'welcome12', 'welcome123', 'welcome!',
+    'letmein!', 'letmein12', 'letmein123', 'letmein@123',
+    'monkey12', 'monkey123', 'dragon12', 'dragon123',
+    'football', 'football1', 'football12', 'football123',
+    'baseball', 'baseball1', 'baseball12',
+    'master12', 'master123', 'shadow12', 'shadow123',
+    'superman', 'superman1', 'superman12',
+    'hello123', 'hello1234', 'hello@123', 'helloworld',
+    'test1234', 'test12345', 'test@1234', 'testing1',
+    'root1234', 'root12345', 'root@1234',
+    'user1234', 'user12345', 'user@1234',
+    'guest12', 'guest123', 'guest@123',
+    'changeme', 'changeme1', 'changeme12', 'changeme123',
+    'default1', 'default12', 'default123',
+    'sunshine', 'sunshine1', 'sunshine12',
+    'princess', 'princess1', 'princess12',
+    'rockyou1', 'rockyou12', 'rockyou123',
+    'computer', 'computer1', 'computer12',
+    'charlie1', 'charlie12', 'charlie123',
+    'donalddu', 'donalddu1', 'donalddu12',
+    'access12', 'access123', 'access@123',
+    'trustno1', 'trustno12', 'trustno123',
+    'security', 'security1', 'security12',
+    '1qaz2wsx', '1qaz@WSX', 'zaq12wsx', 'zaq1@WSX',
+    'p@ssw0rd!', 'p@ssw0rd@', 'p@ssw0rd#', 'p@ssw0rd$',
+    '1234qwer', '1234asdf', '1234zxcv',
+    'asdf1234', 'asdfgh12', 'asdfgh123',
+    'zxcv1234', 'zxcvbn12', 'zxcvbnm1',
+    '11111111', '22222222', '33333333', '44444444',
+    '55555555', '66666666', '77777777', '88888888', '99999999',
+    '00000000', '00000001', '12344321', '123454321',
+    'qwer1234', 'qwerasdf', '1q2w3e4r',
+    '14725836', '258369147', '369258147',
+    'aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd',
+    'aaaa1234', 'bbbb1234', 'cccc1234',
+    'aaaabbbb', '11112222', '11223344',
+    'password!', 'password@', 'password#', 'password$',
+    'admin!@#', 'admin@#$', 'root!@#$',
+    'welcome!', 'welcome@', 'welcome#',
+    'login123', 'login@123', 'logon1234',
+    'system12', 'system123', 'system@123',
+    'server12', 'server123', 'server@123',
+    'oracle12', 'oracle123', 'oracle@123',
+    'mysql123', 'mysql@123', 'postgres',
+    'linux123', 'linux@123', 'windows1',
+    'google12', 'google123', 'google@123',
+    'github12', 'github123', 'github@123',
+    'stackover', 'stack@123', 'overflow1',
+    'bitcoin1', 'bitcoin12', 'blockchain',
+    'ninja123', 'ninja@123', 'ninja!23',
+    'mustang1', 'mustang12', 'mustang123',
+    'pokemon1', 'pokemon12', 'pokemon123'
+];
+
+// 将字典转为小写集合，加速查找
+const COMMON_SET = new Set(COMMON_PASSWORDS.map(p => p.toLowerCase()));
+
+// ========== 字符类型判断 ==========
+const CHAR_TYPES = {
+    upper: /[A-Z]/,
+    lower: /[a-z]/,
+    digit: /[0-9]/,
+    special: /[^A-Za-z0-9]/
+};
+
+// ========== 随机密码生成（多样化策略） ==========
+const ALL_CHARS = {
+    upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    lower: 'abcdefghijklmnopqrstuvwxyz',
+    digit: '0123456789',
+    special: '!@#$%^&*()_+-=[]{}|;:,.<>?'
+};
+
+// 常见弱密码模板（用于随机改造，生成弱密码变体）
+const WEAK_PATTERNS = [
+    '123456', 'password', 'qwerty', 'admin', 'root', 'welcome',
+    'iloveyou', 'monkey', 'dragon', 'football', 'baseball', 'letmein',
+    'abc123', 'test123', 'hello', 'world', 'sunshine', 'princess',
+    'shadow', 'master', 'superman', 'changeme', 'trustno', 'access',
+    'login', 'guest', 'system', 'server', 'computer', 'security',
+    'bitcoin', 'mustang', 'ninja', 'pokemon', 'rockyou', 'donalddu',
+    'google', 'github', 'stack', 'overflow', 'linux', 'windows',
+    'mysql', 'oracle', 'postgres', 'default', 'user', 'pass'
+];
+
+// 键盘连续片段
+const KEYBOARD_SEQS = [
+    'qwer', 'asdf', 'zxcv', '1234', '5678', 'abcd', 'efgh',
+    'qaz', 'wsx', 'edc', 'rfv', 'tgb', 'yhn', 'ujm',
+    '!@#$', '@#$%', '#$%^', '!qaz', '1qaz', '2wsx'
+];
+
+function getRandomChar(str) {
+    return str[Math.floor(Math.random() * str.length)];
+}
+
+function getRandomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// 随机从数组选一个
+function randomPick(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
+ * 按概率生成不同类型的随机密码，模拟真实场景中的密码分布
+ * 返回 { password, category }，category 标注生成类型（用于调试统计）
+ */
+function generateRandomPassword() {
+    // 生成 0~99 的随机数，按区间分配密码类型
+    const rand = Math.random() * 100;
+
+    // ---- 1. 纯数字密码（15%）----
+    if (rand < 15) {
+        return genPureDigits();
+    }
+    // ---- 2. 纯小写字母（8%）----
+    else if (rand < 23) {
+        return genPureLower();
+    }
+    // ---- 3. 纯大写字母（2%）----
+    else if (rand < 25) {
+        return genPureUpper();
+    }
+    // ---- 4. 数字+小写字母简单组合（20%）----
+    else if (rand < 45) {
+        return genDigitsAndLower();
+    }
+    // ---- 5. 数字+大写字母（5%）----
+    else if (rand < 50) {
+        return genDigitsAndUpper();
+    }
+    // ---- 6. 常见弱密码或其变体（20%）----
+    else if (rand < 70) {
+        return genWeakPattern();
+    }
+    // ---- 7. 键盘连续序列组合（10%）----
+    else if (rand < 80) {
+        return genKeyboardPattern();
+    }
+    // ---- 8. 简单单词+数字后缀（8%）----
+    else if (rand < 88) {
+        return genWordPlusDigits();
+    }
+    // ---- 9. 重复/对称模式（2%）----
+    else if (rand < 90) {
+        return genRepeatPattern();
+    }
+    // ---- 10. 较复杂的密码（至少3种字符，10%）----
+    else {
+        return genComplexPassword();
+    }
+}
+
+// ===== 各类型生成子函数 =====
+
+function genPureDigits() {
+    const len = getRandomInt(4, 12);
+    let pwd = '';
+    for (let i = 0; i < len; i++) pwd += getRandomChar(ALL_CHARS.digit);
+    return pwd;
+}
+
+function genPureLower() {
+    const len = getRandomInt(4, 10);
+    let pwd = '';
+    for (let i = 0; i < len; i++) pwd += getRandomChar(ALL_CHARS.lower);
+    return pwd;
+}
+
+function genPureUpper() {
+    const len = getRandomInt(4, 10);
+    let pwd = '';
+    for (let i = 0; i < len; i++) pwd += getRandomChar(ALL_CHARS.upper);
+    return pwd;
+}
+
+function genDigitsAndLower() {
+    const len = getRandomInt(6, 12);
+    let pwd = '';
+    const chars = ALL_CHARS.lower + ALL_CHARS.digit;
+    for (let i = 0; i < len; i++) pwd += getRandomChar(chars);
+    return pwd;
+}
+
+function genDigitsAndUpper() {
+    const len = getRandomInt(6, 12);
+    let pwd = '';
+    const chars = ALL_CHARS.upper + ALL_CHARS.digit;
+    for (let i = 0; i < len; i++) pwd += getRandomChar(chars);
+    return pwd;
+}
+
+function genWeakPattern() {
+    // 从弱密码字典中随机选一个，做轻微变形或直接原样返回
+    const base = randomPick(WEAK_PATTERNS);
+
+    const variant = Math.random();
+    if (variant < 0.3) {
+        // 原样返回（加一些常见后缀）
+        return base + getRandomInt(1, 99);
+    } else if (variant < 0.5) {
+        // 首字母大写
+        return base.charAt(0).toUpperCase() + base.slice(1) + getRandomInt(1, 9);
+    } else if (variant < 0.7) {
+        // 经典 leet 替换
+        return base.replace(/a/g, '@')
+                   .replace(/o/g, '0')
+                   .replace(/i/g, '1')
+                   .replace(/e/g, '3')
+                   .replace(/s/g, '$')
+                   .replace(/t/g, '7');
+    } else if (variant < 0.85) {
+        // 加常见特殊符号后缀
+        const sym = randomPick(['!', '@', '#', '$', '*']);
+        return base + sym + getRandomInt(1, 9);
+    } else {
+        // 直接原样（短密码）
+        return base;
+    }
+}
+
+function genKeyboardPattern() {
+    const seq = randomPick(KEYBOARD_SEQS);
+    const repeat = getRandomInt(1, 3);
+    let pwd = seq.repeat(repeat);
+    // 偶尔追加几个数字
+    if (Math.random() < 0.5) {
+        pwd += getRandomInt(1, 999);
+    }
+    return pwd;
+}
+
+function genWordPlusDigits() {
+    const word = randomPick(WEAK_PATTERNS);
+    const num = getRandomInt(1, 9999);
+    return word + num;
+}
+
+function genRepeatPattern() {
+    // 生成重复或对称模式
+    const ch = getRandomChar(ALL_CHARS.lower + ALL_CHARS.digit);
+    const len = getRandomInt(4, 8);
+    return ch.repeat(len);
+}
+
+function genComplexPassword() {
+    // 较复杂的密码：包含大小写+数字+特殊符号
+    const len = getRandomInt(10, 20);
+    let pwd = '';
+    const allChars = ALL_CHARS.upper + ALL_CHARS.lower + ALL_CHARS.digit + ALL_CHARS.special;
+
+    // 确保每种类型至少一个
+    pwd += getRandomChar(ALL_CHARS.upper);
+    pwd += getRandomChar(ALL_CHARS.lower);
+    pwd += getRandomChar(ALL_CHARS.digit);
+    pwd += getRandomChar(ALL_CHARS.special);
+
+    for (let i = 4; i < len; i++) {
+        pwd += getRandomChar(allChars);
+    }
+
+    // Fisher-Yates 洗牌
+    const arr = pwd.split('');
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr.join('');
+}
+
+// ========== 密码强度检测核心逻辑 ==========
+function checkPasswordStrength(password) {
+    const reasons = [];
+
+    // 规则1: 长度 >= 8
+    if (password.length < 8) {
+        reasons.push('长度不足8位');
+        return { strong: false, reasons };
+    }
+
+    // 规则2: 至少包含3种字符类型
+    let typeCount = 0;
+    if (CHAR_TYPES.upper.test(password)) typeCount++;
+    if (CHAR_TYPES.lower.test(password)) typeCount++;
+    if (CHAR_TYPES.digit.test(password)) typeCount++;
+    if (CHAR_TYPES.special.test(password)) typeCount++;
+
+    if (typeCount < 3) {
+        const missing = [];
+        if (!CHAR_TYPES.upper.test(password)) missing.push('大写字母');
+        if (!CHAR_TYPES.lower.test(password)) missing.push('小写字母');
+        if (!CHAR_TYPES.digit.test(password)) missing.push('数字');
+        if (!CHAR_TYPES.special.test(password)) missing.push('特殊符号');
+        reasons.push(`字符类型不足3种，缺少: ${missing.join(', ')}`);
+        return { strong: false, reasons };
+    }
+
+    // 规则3: 常见弱密码检测
+    const lowerPwd = password.toLowerCase();
+    if (COMMON_SET.has(lowerPwd)) {
+        reasons.push('属于常见弱密码');
+        return { strong: false, reasons };
+    }
+
+    // 模糊匹配常见模式（Levenshtein距离近似）
+    for (const common of COMMON_PASSWORDS) {
+        if (isSimilar(password, common, 2)) {
+            reasons.push(`与常见弱密码"${common}"过于相似`);
+            return { strong: false, reasons };
+        }
+    }
+
+    // 规则4: 检测连续重复字符 (如 aaaa, 1111)
+    if (/(.)\1{3,}/.test(password)) {
+        reasons.push('包含4个以上连续重复字符');
+        return { strong: false, reasons };
+    }
+
+    // 规则5: 检测键盘连续模式 (如 qwer, asdf, 1234)
+    const keyboardPatterns = [
+        'qwer', 'wert', 'erty', 'rtyu', 'tyui', 'yuio', 'uiop',
+        'asdf', 'sdfg', 'dfgh', 'fghj', 'ghjk', 'hjkl',
+        'zxcv', 'xcvb', 'cvbn', 'vbnm',
+        '1234', '2345', '3456', '4567', '5678', '6789', '7890',
+        '!@#$', '@#$%', '#$%^', '$%^&', '%^&*'
+    ];
+    const lowerPwd2 = password.toLowerCase();
+    for (const pattern of keyboardPatterns) {
+        if (lowerPwd2.includes(pattern)) {
+            reasons.push(`包含键盘连续模式"${pattern}"`);
+            return { strong: false, reasons };
+        }
+    }
+
+    // 规则6: 检测简单单词+数字后缀模式（如 hello123, admin456）
+    if (/^(password|admin|root|user|login|welcome|test|guest|qwerty|abc|iloveyou|monkey|dragon)\d{1,4}$/i.test(password)) {
+        reasons.push('简单单词+数字后缀模式');
+        return { strong: false, reasons };
+    }
+
+    return { strong: true, reasons: [] };
+}
+
+// ========== 字符串相似度检测（简化版） ==========
+function isSimilar(str1, str2, maxDiff) {
+    if (Math.abs(str1.length - str2.length) > maxDiff) return false;
+    const s1 = str1.toLowerCase();
+    const s2 = str2.toLowerCase();
+
+    // 检查是否一个是另一个的子串（容错）
+    if (s1.includes(s2) || s2.includes(s1)) return true;
+
+    // 简单的字符差异计数
+    const minLen = Math.min(s1.length, s2.length);
+    let diff = 0;
+    for (let i = 0; i < minLen; i++) {
+        if (s1[i] !== s2[i]) diff++;
+    }
+    diff += Math.abs(s1.length - s2.length);
+    return diff <= maxDiff;
+}
+
+// ========== 主流程控制 ==========
+let isRunning = false;
+let totalCount = 0;
+let strongCount = 0;
+let weakCount = 0;
+let strongPasswords = [];
+let weakPasswords = [];
+
+async function startCheck() {
+    const inputCount = parseInt(document.getElementById('genCount').value) || 10000;
+    totalCount = inputCount;
+
+    // 重置状态
+    isRunning = true;
+    strongCount = 0;
+    weakCount = 0;
+    strongPasswords = [];
+    weakPasswords = [];
+
+    // UI 切换
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').style.display = 'inline-block';
+    document.getElementById('progressSection').style.display = 'block';
+    document.getElementById('statsRow').style.display = 'grid';
+    document.getElementById('columnsSection').style.display = 'grid';
+
+    // 清空列表
+    document.getElementById('strongList').innerHTML = '';
+    document.getElementById('weakList').innerHTML = '';
+
+    const BATCH_SIZE = 200; // 每批处理数量
+    const UPDATE_INTERVAL = 500; // 每500个更新一次UI
+
+    for (let i = 0; i < totalCount; i += BATCH_SIZE) {
+        if (!isRunning) break;
+
+        const end = Math.min(i + BATCH_SIZE, totalCount);
+
+        for (let j = i; j < end; j++) {
+            // 生成随机密码（按概率分布生成多种类型）
+            const pwd = generateRandomPassword();
+            const result = checkPasswordStrength(pwd);
+
+            if (result.strong) {
+                strongCount++;
+                strongPasswords.push(pwd);
+            } else {
+                weakCount++;
+                weakPasswords.push({ pwd, reason: result.reasons[0] || '未知原因' });
+            }
+        }
+
+        // 更新进度
+        const processed = Math.min(end, totalCount);
+        const percent = ((processed / totalCount) * 100).toFixed(1);
+        document.getElementById('progressFill').style.width = percent + '%';
+        document.getElementById('progressPercent').textContent = percent + '%';
+        document.getElementById('progressText').textContent = `已检测 ${processed} / ${totalCount}`;
+
+        // 更新统计
+        document.getElementById('statTotal').textContent = processed;
+        document.getElementById('statStrong').textContent = strongCount;
+        document.getElementById('statWeak').textContent = weakCount;
+        const rate = processed > 0 ? ((strongCount / processed) * 100).toFixed(1) : '0';
+        document.getElementById('statRate').textContent = rate + '%';
+
+        // 更新列表（限制显示数量，避免DOM过多）
+        if (processed % UPDATE_INTERVAL < BATCH_SIZE || end === totalCount) {
+            renderPasswordLists();
+        }
+
+        // 让出主线程，避免页面卡死
+        await sleep(0);
+    }
+
+    // 最终渲染
+    renderPasswordLists();
+
+    // 完成
+    document.getElementById('progressText').textContent = `✅ 检测完成！共 ${totalCount} 个密码`;
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').style.display = 'none';
+    isRunning = false;
+}
+
+function stopCheck() {
+    isRunning = false;
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('progressText').textContent = '⏹ 已停止';
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function renderPasswordLists() {
+    // 渲染强密码（最多显示500条）
+    const strongList = document.getElementById('strongList');
+    const displayStrong = strongPasswords.slice(-500);
+    strongList.innerHTML = displayStrong.map(pwd =>
+        `<div class="password-item strong-item"><span>${escapeHtml(pwd)}</span><span style="color:#00e396;font-size:12px;">✓ 强</span></div>`
+    ).join('');
+
+    // 渲染弱密码（最多显示500条）
+    const weakList = document.getElementById('weakList');
+    const displayWeak = weakPasswords.slice(-500);
+    weakList.innerHTML = displayWeak.map(item =>
+        `<div class="password-item weak-item"><span>${escapeHtml(item.pwd)}</span><span class="reason">${escapeHtml(item.reason)}</span></div>`
+    ).join('');
+
+    // 更新计数
+    document.getElementById('strongCount').textContent = strongCount;
+    document.getElementById('weakCount').textContent = weakCount;
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+</script>
+
+</body>
