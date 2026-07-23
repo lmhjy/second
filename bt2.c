@@ -29,7 +29,7 @@ char *pass_file = "pass.txt";
 char *result_file = "ret.txt";
 int num_threads = 10;
 
-/* 共享计数 */
+/* 共享 计 数  */
 int total_tests = 0;
 int success_count = 0;
 pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
