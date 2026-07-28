@@ -1,0 +1,10 @@
+-w /var/log/auth.log -p wa -k auth_log
+-w /var/www/html/ -p wa -k web_changes
+-a exit,always -F arch=b64 -S execve -F uid>=1000 -k user_commands
+# 新增规则
+-w /etc/apache2 -p wa -k apache_config
+-w /etc/vsftpd.conf -p wa -k ftp_config
+-w /etc/ssh/sshd_config -p wa -k ssh_config
+-w /etc/mysql -p wa -k mysql_config
+-w /var/log/syslog -p r -k syslog_read
+-a always,exit -F arch=b64 -S open -F path=/var/log/auth.log -F uid>=1000 -k auth_access
