@@ -1,0 +1,24 @@
+ssh -o KexAlgorithms=+diffie-hellman-group1-sha1 \
+    -o HostKeyAlgorithms=+ssh-rsa \
+    msfadmin@<Metasploitable_IP>
+
+
+
+scp -o KexAlgorithms=+diffie-hellman-group1-sha1 \
+    -o HostKeyAlgorithms=+ssh-rsa \
+    ~/metasploitable_harden.sh \
+    msfadmin@<Metasploitable_IP>:/tmp/
+
+
+
+
+ssh -o KexAlgorithms=+diffie-hellman-group1-sha1 \
+    -o HostKeyAlgorithms=+ssh-rsa \
+    msfadmin@<Metasploitable_IP>
+
+
+
+sudo chmod +x /tmp/metasploitable_harden.sh
+
+# 执行脚本
+sudo /tmp/metasploitable_harden.sh
