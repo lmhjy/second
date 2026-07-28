@@ -1,0 +1,480 @@
+#!/bin/bash
+# metasploitable_linux_supplement.sh
+# Metasploitable-Linux 专用补充加固脚本
+# 针对 Struts2、Jenkins、Docker、Redis、MongoDB、Elasticsearch、RabbitMQ、Node.js、Memcached 等漏洞
+
+# ========== 颜色定义 ==========
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ========== 日志函数 ==========
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+# ========== 检查root权限 ==========
+if [[ $EUID -ne 0 ]]; then
+   log_error "此脚本必须使用sudo或以root用户运行！"
+   exit 1
+fi
+
+# ========== 创建备份目录 ==========
+BACKUP_DIR="/root/metasploitable_linux_backup_$(date +%Y%m%d_%H%M%S)"
+mkdir -p $BACKUP_DIR
+log_info "备份目录: $BACKUP_DIR"
+
+# ========== 检测系统发行版 ==========
+log_step "检测系统类型..."
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+    VERSION=$VERSION_ID
+    log_info "检测到系统: $OS $VERSION"
+else
+    OS="unknown"
+    log_warn "无法检测系统类型，将尝试通用处理"
+fi
+
+# ========== 检测服务管理器 ==========
+if command -v systemctl &> /dev/null; then
+    SERVICE_MGR="systemctl"
+    log_info "使用 systemd 服务管理器"
+elif command -v service &> /dev/null; then
+    SERVICE_MGR="service"
+    log_info "使用 SysVinit 服务管理器"
+else
+    SERVICE_MGR="unknown"
+    log_warn "无法检测服务管理器"
+fi
+
+# ========== 1. 加固 Apache Struts2 RCE（CVE-2017-5638） ==========
+log_step "1. 处理 Apache Struts2 漏洞..."
+
+# 查找 Tomcat 中的 Struts2 应用
+STRUTS2_PATHS="/var/lib/tomcat7/webapps/struts2-showcase /var/lib/tomcat8/webapps/struts2-showcase /var/lib/tomcat9/webapps/struts2-showcase /usr/share/tomcat7/webapps/struts2-showcase"
+
+for path in $STRUTS2_PATHS; do
+    if [ -d "$path" ]; then
+        log_warn "发现 Struts2 应用: $path"
+        # 备份并删除
+        cp -r "$path" "$BACKUP_DIR/struts2-showcase.bak" 2>/dev/null
+        rm -rf "$path"
+        log_info "  已删除 Struts2 示例应用"
+        
+        # 重启 Tomcat
+        if [ "$SERVICE_MGR" = "systemctl" ]; then
+            systemctl restart tomcat7 2>/dev/null || systemctl restart tomcat8 2>/dev/null || systemctl restart tomcat9 2>/dev/null || true
+        else
+            service tomcat7 restart 2>/dev/null || service tomcat8 restart 2>/dev/null || true
+        fi
+    fi
+done
+
+# 查找其他可能的 Struts2 应用
+find /var/lib -name "*struts*" -type d 2>/dev/null | while read dir; do
+    log_warn "发现可疑 Struts2 目录: $dir"
+    cp -r "$dir" "$BACKUP_DIR/struts2_$(basename $dir).bak" 2>/dev/null
+    rm -rf "$dir"
+    log_info "  已删除: $dir"
+done
+
+# ========== 2. 加固 Jenkins CI RCE（CVE-2016-0788、CVE-2017-1000353） ==========
+log_step "2. 处理 Jenkins CI 漏洞..."
+
+# 停止并禁用 Jenkins
+if [ "$SERVICE_MGR" = "systemctl" ]; then
+    if systemctl status jenkins &>/dev/null; then
+        log_warn "发现 Jenkins 服务正在运行"
+        systemctl stop jenkins
+        systemctl disable jenkins
+        log_info "  已停止并禁用 Jenkins 服务"
+    fi
+else
+    if service jenkins status &>/dev/null; then
+        log_warn "发现 Jenkins 服务正在运行"
+        service jenkins stop
+        update-rc.d -f jenkins remove 2>/dev/null || true
+        log_info "  已停止并禁用 Jenkins 服务"
+    fi
+fi
+
+# 删除 Jenkins 目录
+JENKINS_DIRS="/var/lib/jenkins /var/log/jenkins /etc/jenkins /usr/share/jenkins"
+for dir in $JENKINS_DIRS; do
+    if [ -d "$dir" ]; then
+        cp -r "$dir" "$BACKUP_DIR/jenkins_$(basename $dir).bak" 2>/dev/null
+        rm -rf "$dir"
+        log_info "  已删除 Jenkins 目录: $dir"
+    fi
+done
+
+# 删除 Jenkins 用户
+if id jenkins &>/dev/null; then
+    userdel -r jenkins 2>/dev/null || true
+    log_info "  已删除 Jenkins 用户"
+fi
+
+# 杀掉 Jenkins 进程
+pkill -f jenkins 2>/dev/null || true
+log_info "  已终止所有 Jenkins 进程"
+
+# ========== 3. 加固 Docker 未授权访问（CVE-2015-3630） ==========
+log_step "3. 处理 Docker 未授权访问漏洞..."
+
+if command -v docker &>/dev/null; then
+    log_warn "发现 Docker 已安装"
+    
+    # 检查 Docker 是否监听 2375
+    if netstat -tuln | grep -q ":2375"; then
+        log_warn "  Docker 远程 API 端口 2375 正在监听"
+        
+        # 停止 Docker
+        if [ "$SERVICE_MGR" = "systemctl" ]; then
+            systemctl stop docker
+            systemctl disable docker
+        else
+            service docker stop
+            update-rc.d -f docker remove 2>/dev/null || true
+        fi
+        log_info "  已停止并禁用 Docker 服务"
+        
+        # 修改 Docker 配置仅监听本地
+        DOCKER_CONFIG="/etc/default/docker"
+        if [ -f "$DOCKER_CONFIG" ]; then
+            cp "$DOCKER_CONFIG" "$BACKUP_DIR/docker.default.bak"
+            echo 'DOCKER_OPTS="-H tcp://127.0.0.1:2375"' >> "$DOCKER_CONFIG"
+            log_info "  已配置 Docker 仅监听本地"
+        fi
+        
+        # 如果不需要 Docker，彻底删除
+        read -p "是否彻底卸载 Docker? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            apt-get purge -y docker-engine docker-ce docker.io 2>/dev/null || yum remove -y docker 2>/dev/null || true
+            rm -rf /var/lib/docker
+            log_info "  已彻底卸载 Docker"
+        fi
+    else
+        log_info "  Docker 远程 API 未开放，无需处理"
+    fi
+else
+    log_info "  未安装 Docker"
+fi
+
+# ========== 4. 加固 Redis 未认证（CVE-2015-8080） ==========
+log_step "4. 处理 Redis 未认证漏洞..."
+
+if command -v redis-server &>/dev/null; then
+    log_warn "发现 Redis 已安装"
+    
+    REDIS_CONFIG="/etc/redis/redis.conf"
+    if [ -f "$REDIS_CONFIG" ]; then
+        cp "$REDIS_CONFIG" "$BACKUP_DIR/redis.conf.bak"
+        
+        # 生成随机密码
+        REDIS_PASS=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+        
+        # 修改配置：绑定本地 + 开启认证
+        sed -i 's/^bind .*/bind 127.0.0.1/g' "$REDIS_CONFIG"
+        sed -i 's/^# requirepass .*/requirepass '"$REDIS_PASS"'/g' "$REDIS_CONFIG"
+        
+        # 重启 Redis
+        if [ "$SERVICE_MGR" = "systemctl" ]; then
+            systemctl restart redis-server
+        else
+            service redis-server restart 2>/dev/null || service redis restart 2>/dev/null || true
+        fi
+        
+        log_info "  已配置 Redis 绑定本地 + 开启认证"
+        log_warn "  Redis 新密码: $REDIS_PASS (已保存在 $BACKUP_DIR/redis_pass.txt)"
+        echo "Redis 密码: $REDIS_PASS" >> "$BACKUP_DIR/redis_pass.txt"
+        chmod 600 "$BACKUP_DIR/redis_pass.txt"
+    fi
+else
+    log_info "  未安装 Redis"
+fi
+
+# ========== 5. 加固 MongoDB 无认证 ==========
+log_step "5. 处理 MongoDB 无认证漏洞..."
+
+if command -v mongod &>/dev/null; then
+    log_warn "发现 MongoDB 已安装"
+    
+    # 检查是否开启认证
+    if ! grep -q "auth = true" /etc/mongodb.conf 2>/dev/null; then
+        log_warn "  MongoDB 未开启认证"
+        
+        # 生成管理员密码
+        MONGO_PASS=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+        
+        # 停止 MongoDB
+        if [ "$SERVICE_MGR" = "systemctl" ]; then
+            systemctl stop mongodb
+        else
+            service mongodb stop 2>/dev/null || true
+        fi
+        
+        # 修改配置开启认证
+        MONGODB_CONFIG="/etc/mongodb.conf"
+        if [ -f "$MONGODB_CONFIG" ]; then
+            cp "$MONGODB_CONFIG" "$BACKUP_DIR/mongodb.conf.bak"
+            echo "auth = true" >> "$MONGODB_CONFIG"
+            echo "bind_ip = 127.0.0.1" >> "$MONGODB_CONFIG"
+        fi
+        
+        # 启动 MongoDB
+        if [ "$SERVICE_MGR" = "systemctl" ]; then
+            systemctl start mongodb
+        else
+            service mongodb start 2>/dev/null || true
+        fi
+        
+        # 创建管理员用户
+        sleep 3  # 等待 MongoDB 启动
+        mongo admin --eval "db.createUser({user:'admin',pwd:'$MONGO_PASS',roles:['root']})" 2>/dev/null
+        
+        log_info "  已配置 MongoDB 开启认证 + 绑定本地"
+        log_warn "  MongoDB 管理员密码: $MONGO_PASS (已保存在 $BACKUP_DIR/mongo_pass.txt)"
+        echo "MongoDB 密码: $MONGO_PASS" >> "$BACKUP_DIR/mongo_pass.txt"
+        chmod 600 "$BACKUP_DIR/mongo_pass.txt"
+    else
+        log_info "  MongoDB 已开启认证，无需处理"
+    fi
+else
+    log_info "  未安装 MongoDB"
+fi
+
+# ========== 6. 加固 Elasticsearch RCE（CVE-2015-1427） ==========
+log_step "6. 处理 Elasticsearch 漏洞..."
+
+if command -v elasticsearch &>/dev/null; then
+    log_warn "发现 Elasticsearch 已安装"
+    
+    # 停止并禁用 Elasticsearch
+    if [ "$SERVICE_MGR" = "systemctl" ]; then
+        systemctl stop elasticsearch
+        systemctl disable elasticsearch
+    else
+        service elasticsearch stop 2>/dev/null || true
+        update-rc.d -f elasticsearch remove 2>/dev/null || true
+    fi
+    
+    # 删除 Elasticsearch 数据
+    if [ -d "/var/lib/elasticsearch" ]; then
+        cp -r "/var/lib/elasticsearch" "$BACKUP_DIR/elasticsearch.bak" 2>/dev/null
+        rm -rf "/var/lib/elasticsearch"
+        log_info "  已删除 Elasticsearch 数据"
+    fi
+    
+    # 杀掉进程
+    pkill -f elasticsearch 2>/dev/null || true
+    log_info "  已停止并禁用 Elasticsearch 服务"
+    
+    # 询问是否卸载
+    read -p "是否彻底卸载 Elasticsearch? (y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        apt-get purge -y elasticsearch 2>/dev/null || yum remove -y elasticsearch 2>/dev/null || true
+        log_info "  已彻底卸载 Elasticsearch"
+    fi
+else
+    log_info "  未安装 Elasticsearch"
+fi
+
+# ========== 7. 加固 RabbitMQ 默认口令（guest:guest） ==========
+log_step "7. 处理 RabbitMQ 默认口令漏洞..."
+
+if command -v rabbitmqctl &>/dev/null; then
+    log_warn "发现 RabbitMQ 已安装"
+    
+    # 修改 guest 密码
+    NEW_RABBIT_PASS=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+    
+    # 尝试修改密码
+    if rabbitmqctl change_password guest "$NEW_RABBIT_PASS" 2>/dev/null; then
+        log_info "  已修改 RabbitMQ guest 密码"
+        log_warn "  RabbitMQ 新密码: $NEW_RABBIT_PASS (已保存在 $BACKUP_DIR/rabbit_pass.txt)"
+        echo "RabbitMQ 密码: $NEW_RABBIT_PASS" >> "$BACKUP_DIR/rabbit_pass.txt"
+        chmod 600 "$BACKUP_DIR/rabbit_pass.txt"
+    else
+        log_warn "  RabbitMQ 可能未运行，尝试启动后修改..."
+        if [ "$SERVICE_MGR" = "systemctl" ]; then
+            systemctl start rabbitmq-server
+        else
+            service rabbitmq-server start 2>/dev/null || true
+        fi
+        sleep 3
+        rabbitmqctl change_password guest "$NEW_RABBIT_PASS" 2>/dev/null && \
+        log_info "  已修改 RabbitMQ guest 密码"
+    fi
+    
+    # 限制 RabbitMQ 绑定到本地
+    RABBIT_CONFIG="/etc/rabbitmq/rabbitmq.config"
+    if [ -f "$RABBIT_CONFIG" ]; then
+        cp "$RABBIT_CONFIG" "$BACKUP_DIR/rabbitmq.config.bak"
+        # 添加本地绑定配置
+        echo "[{rabbit, [{tcp_listeners, [{\"127.0.0.1\", 5672}]}]}]." > "$RABBIT_CONFIG"
+        log_info "  已配置 RabbitMQ 仅监听本地"
+    fi
+    
+    # 重启 RabbitMQ
+    if [ "$SERVICE_MGR" = "systemctl" ]; then
+        systemctl restart rabbitmq-server
+    else
+        service rabbitmq-server restart 2>/dev/null || true
+    fi
+else
+    log_info "  未安装 RabbitMQ"
+fi
+
+# ========== 8. 加固 Node.js Express 漏洞 ==========
+log_step "8. 处理 Node.js Express 漏洞..."
+
+# 查找 Node.js 应用
+NODE_APPS=$(find /usr/local /opt /home /var -name "node_modules" -type d 2>/dev/null | head -10)
+
+if [ -n "$NODE_APPS" ]; then
+    log_warn "发现 Node.js 应用"
+    
+    for app_dir in $NODE_APPS; do
+        app_parent=$(dirname "$app_dir")
+        log_info "  发现 Node 应用目录: $app_parent"
+        
+        cp -r "$app_parent" "$BACKUP_DIR/node_app_$(basename $app_parent).bak" 2>/dev/null
+        rm -rf "$app_parent"
+        log_info "  已删除 Node 应用: $app_parent"
+    done
+fi
+
+# 杀掉 Node 进程
+if pkill -f node 2>/dev/null; then
+    log_info "  已终止所有 Node.js 进程"
+fi
+
+# 停止并禁用 Node 服务
+if [ "$SERVICE_MGR" = "systemctl" ]; then
+    systemctl stop node-app 2>/dev/null || systemctl stop nodejs-app 2>/dev/null || true
+    systemctl disable node-app 2>/dev/null || systemctl disable nodejs-app 2>/dev/null || true
+else
+    service node-app stop 2>/dev/null || service nodejs-app stop 2>/dev/null || true
+    update-rc.d -f node-app remove 2>/dev/null || update-rc.d -f nodejs-app remove 2>/dev/null || true
+fi
+
+# ========== 9. 加固 Memcached 反射放大 ==========
+log_step "9. 处理 Memcached 反射放大漏洞..."
+
+if command -v memcached &>/dev/null; then
+    log_warn "发现 Memcached 已安装"
+    
+    MEMCACHED_CONFIG="/etc/memcached.conf"
+    if [ -f "$MEMCACHED_CONFIG" ]; then
+        cp "$MEMCACHED_CONFIG" "$BACKUP_DIR/memcached.conf.bak"
+        
+        # 仅监听本地
+        sed -i 's/^-l .*/-l 127.0.0.1/g' "$MEMCACHED_CONFIG"
+        # 禁用 UDP（反射放大主要靠 UDP）
+        echo "-U 0" >> "$MEMCACHED_CONFIG"
+        
+        log_info "  已配置 Memcached 仅监听本地 + 禁用 UDP"
+    fi
+    
+    # 重启 Memcached
+    if [ "$SERVICE_MGR" = "systemctl" ]; then
+        systemctl restart memcached
+    else
+        service memcached restart 2>/dev/null || true
+    fi
+else
+    log_info "  未安装 Memcached"
+fi
+
+# ========== 10. 防火墙补充规则（针对新发现的端口） ==========
+log_step "10. 补充防火墙规则..."
+
+# 封堵额外的高危端口
+EXTRA_PORTS="2375 2376 6379 27017 9200 9300 5672 15672 11211 8080 3000 5000 8081 8082 8083"
+
+for port in $EXTRA_PORTS; do
+    iptables -A INPUT -p tcp --dport $port -j DROP 2>/dev/null || true
+    iptables -A INPUT -p udp --dport $port -j DROP 2>/dev/null || true
+    log_info "  封堵端口 $port"
+done
+
+# 保存防火墙规则
+iptables-save > /etc/iptables.rules 2>/dev/null || true
+iptables-save > "$BACKUP_DIR/iptables.rules.new" 2>/dev/null || true
+
+# ========== 11. 生成审计报告 ==========
+log_step "11. 生成审计报告..."
+
+AUDIT_FILE="$BACKUP_DIR/audit_report_supplement.txt"
+
+cat > "$AUDIT_FILE" << EOF
+====================================
+Metasploitable-Linux 补充加固审计报告
+====================================
+时间: $(date)
+主机名: $(hostname)
+系统: $OS $VERSION
+内核: $(uname -r)
+
+=== 已处理的漏洞清单 ===
+✓ Apache Struts2 RCE 应用删除
+✓ Jenkins CI 停止并禁用
+✓ Docker 未授权访问加固
+✓ Redis 未认证加固 (密码已生成)
+✓ MongoDB 无认证加固 (密码已生成)
+✓ Elasticsearch 停止并禁用
+✓ RabbitMQ 默认口令修改 (密码已生成)
+✓ Node.js 应用删除
+✓ Memcached 反射放大加固
+✓ 防火墙补充规则 (封堵额外高危端口)
+
+=== 密码文件 ===
+- Redis 密码: $BACKUP_DIR/redis_pass.txt
+- MongoDB 密码: $BACKUP_DIR/mongo_pass.txt
+- RabbitMQ 密码: $BACKUP_DIR/rabbit_pass.txt
+
+=== 开放的端口 ===
+$(netstat -tuln | grep LISTEN 2>/dev/null || ss -tuln 2>/dev/null)
+
+=== 运行中的服务 ===
+$(ps aux | grep -v grep | head -30 2>/dev/null)
+
+=== 防火墙规则 ===
+$(iptables -L -n -v 2>/dev/null)
+
+=== 安全建议 ===
+1. 记录所有生成的密码文件
+2. 建议重启系统: sudo reboot
+3. 定期检查开放端口: netstat -tuln
+4. 考虑升级系统软件包: apt-get upgrade
+EOF
+
+chmod 600 "$AUDIT_FILE"
+log_info "审计报告已生成: $AUDIT_FILE"
+
+# ========== 12. 显示完成信息 ==========
+echo ""
+echo "===================================="
+log_info "Metasploitable-Linux 补充加固完成！"
+echo "===================================="
+echo ""
+log_warn "⚠️  已生成密码文件:"
+log_warn "  Redis: $BACKUP_DIR/redis_pass.txt"
+log_warn "  MongoDB: $BACKUP_DIR/mongo_pass.txt"
+log_warn "  RabbitMQ: $BACKUP_DIR/rabbit_pass.txt"
+log_warn "⚠️  备份目录: $BACKUP_DIR"
+log_warn "⚠️  审计报告: $AUDIT_FILE"
+echo ""
+log_info "建议执行以下检查："
+log_info "  netstat -tuln    # 查看开放端口"
+log_info "  iptables -L -n   # 查看防火墙规则"
+log_info "  ps aux | grep -v grep  # 查看运行服务"
+echo ""
+log_info "建议重启系统: sudo reboot"
+echo "===================================="

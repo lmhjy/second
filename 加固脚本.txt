@@ -1,0 +1,356 @@
+#!/bin/bash
+# metasploitable_harden_fixed.sh
+# Metasploitable 2 专用加固脚本
+# 兼容 Ubuntu 8.04.2 (Kernel 2.6.24-16-server)
+
+# ========== 颜色定义 ==========
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# ========== 日志函数 ==========
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# ========== 检查root权限 ==========
+if [[ $EUID -ne 0 ]]; then
+   log_error "此脚本必须使用sudo或以root用户运行！"
+   exit 1
+fi
+
+# ========== 创建备份目录 ==========
+BACKUP_DIR="/root/metasploitable_backup_$(date +%Y%m%d_%H%M%S)"
+mkdir -p $BACKUP_DIR
+log_info "备份目录: $BACKUP_DIR"
+
+# ========== 1. 备份关键配置 ==========
+log_info "备份关键配置文件..."
+for file in /etc/ssh/sshd_config /etc/xinetd.conf /etc/inetd.conf /etc/samba/smb.conf /etc/hosts.deny /etc/hosts.allow /etc/sysctl.conf; do
+    if [ -f "$file" ]; then
+        cp "$file" "$BACKUP_DIR/" 2>/dev/null || true
+    fi
+done
+if [ -d /etc/xinetd.d ]; then
+    cp -r /etc/xinetd.d "$BACKUP_DIR/" 2>/dev/null || true
+fi
+iptables-save > "$BACKUP_DIR/iptables.rules.bak" 2>/dev/null || true
+log_info "备份完成"
+
+# ========== 2. 修改密码 ==========
+log_info "修改默认弱密码..."
+NEW_PASSWORD=$(openssl rand -base64 12 | tr -d "=+/" | cut -c1-12)
+if [ -z "$NEW_PASSWORD" ]; then
+    NEW_PASSWORD="Metasploitable2026!@#"
+fi
+echo "msfadmin:$NEW_PASSWORD" | chpasswd
+echo "root:$NEW_PASSWORD" | chpasswd
+
+# 保存密码到文件
+echo "====================================" > /root/new_password.txt
+echo "新密码: $NEW_PASSWORD" >> /root/new_password.txt
+echo "生成时间: $(date)" >> /root/new_password.txt
+echo "====================================" >> /root/new_password.txt
+chmod 600 /root/new_password.txt
+log_warn "新密码: $NEW_PASSWORD (已保存至 /root/new_password.txt)"
+log_warn "⚠️  请立即记录并安全保存！"
+
+# ========== 3. 停止并禁用服务 ==========
+log_info "停止并禁用高危服务..."
+
+SERVICES="vsftpd telnet smbd nmbd distcc sendmail portmap nfs-common nfs-kernel-server"
+
+for service in $SERVICES; do
+    log_info "  处理: $service"
+    
+    # 停止服务
+    if [ -f "/etc/init.d/$service" ]; then
+        /etc/init.d/$service stop 2>/dev/null || true
+        # 移除开机自启动
+        update-rc.d -f $service remove 2>/dev/null || true
+        # 移除执行权限
+        chmod -x /etc/init.d/$service 2>/dev/null || true
+    fi
+    
+    # 强制终止进程
+    pgrep -f "$service" 2>/dev/null && pkill -f "$service" 2>/dev/null || true
+done
+
+# ========== 4. 禁用xinetd服务 ==========
+log_info "配置xinetd服务..."
+if [ -d /etc/xinetd.d ]; then
+    for f in /etc/xinetd.d/*; do
+        if [ -f "$f" ]; then
+            log_info "  禁用: $f"
+            sed -i 's/disable[[:space:]]*=[[:space:]]*no/disable = yes/g' "$f"
+        fi
+    done
+    /etc/init.d/xinetd restart 2>/dev/null || true
+fi
+
+# ========== 5. 禁用inetd危险服务 ==========
+log_info "禁用inetd危险服务..."
+INETD_FILE="/etc/inetd.conf"
+if [ -f "$INETD_FILE" ]; then
+    cp "$INETD_FILE" "$BACKUP_DIR/inetd.conf.bak"
+    
+    # 禁用多种危险服务
+    sed -i 's/^\(.*telnet.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*rlogin.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*rsh.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*rexec.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*shell.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*login.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*exec.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*finger.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*talk.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*echo.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*daytime.*\)$/#\1/' "$INETD_FILE"
+    sed -i 's/^\(.*chargen.*\)$/#\1/' "$INETD_FILE"
+    
+    /etc/init.d/inetd restart 2>/dev/null || true
+fi
+
+# ========== 6. 防火墙规则 ==========
+log_info "配置防火墙规则 (iptables)..."
+
+# 清除现有规则
+iptables -F
+iptables -X
+iptables -Z
+
+# 设置默认策略
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# 允许回环接口
+iptables -A INPUT -i lo -j ACCEPT
+
+# 允许已建立的连接
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# 允许SSH (端口22)
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+# 封堵高危端口 (Metasploitable 2 特有)
+log_info "  封堵高危端口..."
+for port in 21 23 1524 6667 2049 3632 5432 5900 6000 8180 139 445 111 631 512 513 514; do
+    iptables -A INPUT -p tcp --dport $port -j DROP
+    iptables -A INPUT -p udp --dport $port -j DROP
+    log_info "    封堵端口 $port"
+done
+
+# 保存防火墙规则
+iptables-save > /etc/iptables.rules 2>/dev/null || true
+iptables-save > "$BACKUP_DIR/iptables.rules.new" 2>/dev/null || true
+
+# 创建开机自启动规则
+cat > /etc/init.d/iptables_harden << 'EOF'
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:          iptables_harden
+# Required-Start:    $network
+# Required-Stop:     $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Description:       Load iptables rules
+### END INIT INFO
+
+case "$1" in
+    start|restart)
+        iptables-restore /etc/iptables.rules
+        ;;
+    stop)
+        iptables -F
+        iptables -P INPUT ACCEPT
+        iptables -P FORWARD ACCEPT
+        iptables -P OUTPUT ACCEPT
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+EOF
+chmod +x /etc/init.d/iptables_harden
+update-rc.d iptables_harden defaults 2>/dev/null || true
+
+log_info "防火墙规则已配置并保存"
+
+# ========== 7. 加固SSH ==========
+log_info "加固SSH配置..."
+SSHD_CONFIG="/etc/ssh/sshd_config"
+if [ -f "$SSHD_CONFIG" ]; then
+    cp "$SSHD_CONFIG" "$BACKUP_DIR/sshd_config.bak"
+    
+    # 备份后修改
+    sed -i 's/^PermitRootLogin.*/PermitRootLogin no/g' "$SSHD_CONFIG"
+    sed -i 's/^PermitEmptyPasswords.*/PermitEmptyPasswords no/g' "$SSHD_CONFIG"
+    sed -i 's/^MaxAuthTries.*/MaxAuthTries 3/g' "$SSHD_CONFIG"
+    sed -i 's/^ClientAliveInterval.*/ClientAliveInterval 300/g' "$SSHD_CONFIG"
+    sed -i 's/^ClientAliveCountMax.*/ClientAliveCountMax 2/g' "$SSHD_CONFIG"
+    
+    # 添加额外的安全配置
+    echo "" >> "$SSHD_CONFIG"
+    echo "# ===== 安全配置 (自动添加) =====" >> "$SSHD_CONFIG"
+    echo "Protocol 2" >> "$SSHD_CONFIG"
+    echo "LoginGraceTime 30" >> "$SSHD_CONFIG"
+    echo "PermitUserEnvironment no" >> "$SSHD_CONFIG"
+    echo "AllowUsers msfadmin" >> "$SSHD_CONFIG"
+    echo "X11Forwarding no" >> "$SSHD_CONFIG"
+    
+    /etc/init.d/ssh restart 2>/dev/null || true
+    log_info "SSH配置已加固"
+fi
+
+# ========== 8. 移除危险SUID文件 ==========
+log_info "移除危险SUID文件..."
+SUID_FILES="/usr/bin/nmap /usr/bin/gcc /usr/bin/g++ /usr/bin/find /usr/bin/wget /usr/bin/curl /usr/sbin/tcpdump"
+
+for file in $SUID_FILES; do
+    if [ -f "$file" ]; then
+        chmod u-s,g-s "$file" 2>/dev/null && log_info "  处理: $file"
+    fi
+done
+
+# ========== 9. 禁用IPv6 ==========
+log_info "禁用IPv6..."
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf 2>/dev/null || true
+
+# ========== 10. 加固Apache (如果存在) ==========
+log_info "加固Apache配置..."
+APACHE_CONFIG="/etc/apache2/apache2.conf"
+if [ -f "$APACHE_CONFIG" ]; then
+    cp "$APACHE_CONFIG" "$BACKUP_DIR/apache2.conf.bak"
+    
+    # 添加安全配置
+    echo "" >> "$APACHE_CONFIG"
+    echo "# ===== 安全配置 (自动添加) =====" >> "$APACHE_CONFIG"
+    echo "ServerTokens Prod" >> "$APACHE_CONFIG"
+    echo "ServerSignature Off" >> "$APACHE_CONFIG"
+    echo "TraceEnable Off" >> "$APACHE_CONFIG"
+    echo "FileETag None" >> "$APACHE_CONFIG"
+    
+    /etc/init.d/apache2 restart 2>/dev/null || true
+    log_info "Apache已加固"
+fi
+
+# ========== 11. 加固MySQL (如果存在) ==========
+log_info "加固MySQL配置..."
+MYSQL_CONFIG="/etc/mysql/my.cnf"
+if [ -f "$MYSQL_CONFIG" ]; then
+    cp "$MYSQL_CONFIG" "$BACKUP_DIR/my.cnf.bak"
+    
+    # 设置MySQL仅监听本地
+    sed -i 's/^bind-address.*/bind-address = 127.0.0.1/g' "$MYSQL_CONFIG"
+    
+    /etc/init.d/mysql restart 2>/dev/null || true
+    log_info "MySQL已加固"
+fi
+
+# ========== 12. 内核参数加固 ==========
+log_info "加固内核参数..."
+SYSCTL_CONFIG="/etc/sysctl.conf"
+cp "$SYSCTL_CONFIG" "$BACKUP_DIR/sysctl.conf.bak"
+
+cat >> "$SYSCTL_CONFIG" << EOF
+
+# ===== 安全内核参数 (自动添加) =====
+# 网络安全
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.tcp_syncookies = 1
+
+# 内存安全
+kernel.dmesg_restrict = 1
+kernel.kptr_restrict = 2
+kernel.yama.ptrace_scope = 1
+
+# 进程安全
+fs.suid_dumpable = 0
+EOF
+
+sysctl -p 2>/dev/null || true
+log_info "内核参数已加固"
+
+# ========== 13. 设置文件权限 ==========
+log_info "设置关键文件权限..."
+chmod 600 /etc/ssh/sshd_config 2>/dev/null || true
+chmod 600 /etc/shadow 2>/dev/null || true
+chmod 600 /etc/gshadow 2>/dev/null || true
+chmod 600 /root/new_password.txt 2>/dev/null || true
+
+# ========== 14. 生成审计报告 ==========
+log_info "生成审计报告..."
+AUDIT_FILE="$BACKUP_DIR/audit_report.txt"
+
+echo "====================================" > "$AUDIT_FILE"
+echo "Metasploitable 2 加固审计报告" >> "$AUDIT_FILE"
+echo "====================================" >> "$AUDIT_FILE"
+echo "时间: $(date)" >> "$AUDIT_FILE"
+echo "主机名: $(hostname)" >> "$AUDIT_FILE"
+echo "内核: $(uname -r)" >> "$AUDIT_FILE"
+echo "" >> "$AUDIT_FILE"
+
+echo "=== 开放的端口 ===" >> "$AUDIT_FILE"
+netstat -tuln | grep LISTEN >> "$AUDIT_FILE" 2>/dev/null || ss -tuln >> "$AUDIT_FILE" 2>/dev/null
+echo "" >> "$AUDIT_FILE"
+
+echo "=== 运行中的服务 ===" >> "$AUDIT_FILE"
+ps aux | grep -v grep | head -30 >> "$AUDIT_FILE" 2>/dev/null
+echo "" >> "$AUDIT_FILE"
+
+echo "=== 防火墙规则 ===" >> "$AUDIT_FILE"
+iptables -L -n -v >> "$AUDIT_FILE" 2>/dev/null
+echo "" >> "$AUDIT_FILE"
+
+echo "=== SUID文件 (前20个) ===" >> "$AUDIT_FILE"
+find /usr/bin /usr/sbin -type f -perm /4000 2>/dev/null | head -20 >> "$AUDIT_FILE"
+echo "" >> "$AUDIT_FILE"
+
+echo "=== 加固项目清单 ===" >> "$AUDIT_FILE"
+echo "✓ 备份配置" >> "$AUDIT_FILE"
+echo "✓ 更新密码" >> "$AUDIT_FILE"
+echo "✓ 禁用高危服务" >> "$AUDIT_FILE"
+echo "✓ 配置xinetd" >> "$AUDIT_FILE"
+echo "✓ 禁用inetd危险服务" >> "$AUDIT_FILE"
+echo "✓ 配置防火墙" >> "$AUDIT_FILE"
+echo "✓ 加固SSH" >> "$AUDIT_FILE"
+echo "✓ 移除危险SUID" >> "$AUDIT_FILE"
+echo "✓ 禁用IPv6" >> "$AUDIT_FILE"
+echo "✓ 加固Apache/MySQL" >> "$AUDIT_FILE"
+echo "✓ 加固内核参数" >> "$AUDIT_FILE"
+echo "" >> "$AUDIT_FILE"
+
+echo "=== 安全建议 ===" >> "$AUDIT_FILE"
+echo "1. 立即记录新密码 ( /root/new_password.txt )" >> "$AUDIT_FILE"
+echo "2. 建议重启系统: sudo reboot" >> "$AUDIT_FILE"
+echo "3. 定期检查开放端口: netstat -tuln" >> "$AUDIT_FILE"
+
+chmod 600 "$AUDIT_FILE"
+log_info "审计报告已生成: $AUDIT_FILE"
+
+# ========== 15. 显示完成信息 ==========
+echo ""
+echo "===================================="
+log_info "Metasploitable 2 加固完成！"
+echo "===================================="
+echo ""
+log_warn "⚠️  新密码: $NEW_PASSWORD"
+log_warn "⚠️  密码文件: /root/new_password.txt"
+log_warn "⚠️  备份目录: $BACKUP_DIR"
+log_warn "⚠️  审计报告: $AUDIT_FILE"
+echo ""
+log_info "建议执行以下检查："
+log_info "  netstat -tuln    # 查看开放端口"
+log_info "  iptables -L -n   # 查看防火墙规则"
+log_info "  ps aux | grep -v grep  # 查看运行服务"
+echo ""
+log_info "建议重启系统: sudo reboot"
+echo "===================================="
+能实现的功能
